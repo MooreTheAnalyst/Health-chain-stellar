@@ -2,6 +2,9 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
+import type Redis from 'ioredis';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
@@ -17,6 +20,9 @@ import { BloodUnitsModule } from './blood-units/blood-units.module';
 import { BullModule } from '@nestjs/bullmq';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from './auth/guards/permissions.guard';
+import { RedisModule } from './redis/redis.module';
+import { REDIS_CLIENT } from './redis/redis.constants';
+import { throttleGetTracker } from './throttler/throttle-tracker.util';
 
 @Module({
   imports: [
@@ -40,6 +46,27 @@ import { PermissionsGuard } from './auth/guards/permissions.guard';
           'development',
         logging: false,
       }),
+    }),
+    ThrottlerModule.forRootAsync({
+      imports: [ConfigModule, RedisModule],
+      inject: [ConfigService, REDIS_CLIENT],
+      useFactory: (configService: ConfigService, redis: Redis) => {
+        const useRedis =
+          configService.get<string>('THROTTLER_USE_REDIS', 'true') === 'true';
+        return {
+          throttlers: [
+            {
+              name: 'default',
+              ttl: 60_000,
+              limit: 100,
+            },
+          ],
+          ...(useRedis ? { storage: new ThrottlerStorageRedisService(redis) } : {}),
+          getTracker: throttleGetTracker,
+          errorMessage:
+            'Rate limit exceeded. Please try again later.',
+        };
+      },
     }),
     AuthModule,
     UsersModule,
@@ -67,6 +94,10 @@ import { PermissionsGuard } from './auth/guards/permissions.guard';
     AppService,
     /** JWT authentication applied globally; use @Public() to opt-out */
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    /**
+     * Runs after JWT so throttling can use `req.user` on protected routes (IP otherwise).
+     */
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
     /** Permission enforcement applied globally; use @RequirePermissions() to specify */
     { provide: APP_GUARD, useClass: PermissionsGuard },
   ],
