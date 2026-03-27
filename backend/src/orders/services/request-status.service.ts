@@ -50,6 +50,7 @@ export class RequestStatusService {
     private readonly ordersGateway: OrdersGateway,
     private readonly eventEmitter: EventEmitter2,
     private readonly inventoryService: InventoryService,
+    private readonly permissionsService: PermissionsService,
     @Optional()
     @InjectRepository(BlockchainEvent)
     private readonly blockchainEventRepo?: Repository<BlockchainEvent>,
@@ -67,7 +68,12 @@ export class RequestStatusService {
     const nextStatus = this.resolveNextStatus(dto);
     const previousStatus = order.status;
 
-    this.enforceActionRole(dto.action, actorRole);
+    if (actorRole) {
+      this.enforceActionRole(dto.action, {
+        id: actorId ?? '',
+        role: actorRole,
+      });
+    }
     this.stateMachine.transition(previousStatus, nextStatus);
 
     const eventType = STATUS_TO_EVENT_TYPE[nextStatus];
