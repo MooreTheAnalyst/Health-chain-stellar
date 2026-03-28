@@ -1090,3 +1090,112 @@ fn test_batch_dispose_after_expiry() {
     assert_eq!(client.get_blood_unit(&id2).status, BloodStatus::Disposed);
 }
 
+
+// ─── Reservation Tests ────────────────────────────────────────────────────────
+
+#[test]
+fn test_reserve_blood_success() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000);
+
+    let unit_id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    assert_eq!(client.get_blood_unit(&unit_id).status, BloodStatus::Available);
+
+    let res_id = client.reserve_blood(&admin, &vec![&env, unit_id], &42u64, &3600u64);
+    assert_eq!(res_id, 1);
+
+    // Unit must now be Reserved
+    assert_eq!(client.get_blood_unit(&unit_id).status, BloodStatus::Reserved);
+
+    // Reservation record must be retrievable
+    let reservation = client.get_reservation(&res_id);
+    assert_eq!(reservation.request_id, 42);
+    assert_eq!(reservation.requester, admin);
+    assert_eq!(reservation.expiration_timestamp, 1000 + 3600);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #140)")]
+fn test_reserve_blood_already_reserved() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000);
+
+    let unit_id = client.register_blood(&admin, &BloodType::BPositive, &450u32, &None);
+    client.reserve_blood(&admin, &vec![&env, unit_id], &1u64, &3600u64);
+    // Second reservation on same unit must fail
+    client.reserve_blood(&admin, &vec![&env, unit_id], &2u64, &3600u64);
+}
+
+#[test]
+fn test_release_reservation_frees_units() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000);
+
+    let unit_id = client.register_blood(&admin, &BloodType::ONegative, &450u32, &None);
+    let res_id = client.reserve_blood(&admin, &vec![&env, unit_id], &1u64, &3600u64);
+
+    client.release_reservation(&res_id);
+
+    // Unit must be Available again
+    assert_eq!(client.get_blood_unit(&unit_id).status, BloodStatus::Available);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #150)")]
+fn test_release_reservation_not_found() {
+    let (_env, _admin, client, _) = create_test_contract();
+    client.release_reservation(&999u64);
+}
+
+#[test]
+fn test_release_expired_reservation_still_frees_units() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000);
+
+    let unit_id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    let res_id = client.reserve_blood(&admin, &vec![&env, unit_id], &1u64, &60u64);
+
+    // Advance time past expiration
+    env.ledger().set_timestamp(2000);
+
+    // Release should still work (caller cleans up stale reservation)
+    client.release_reservation(&res_id);
+    assert_eq!(client.get_blood_unit(&unit_id).status, BloodStatus::Available);
+}
+
+#[test]
+fn test_batch_reserve_blood() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000);
+
+    let id1 = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    let id2 = client.register_blood(&admin, &BloodType::BPositive, &450u32, &None);
+    let id3 = client.register_blood(&admin, &BloodType::ONegative, &450u32, &None);
+
+    let batch = vec![
+        &env,
+        (vec![&env, id1], 10u64, 3600u64),
+        (vec![&env, id2, id3], 11u64, 7200u64),
+    ];
+
+    let res_ids = client.batch_reserve_blood(&admin, &batch);
+    assert_eq!(res_ids.len(), 2);
+
+    assert_eq!(client.get_blood_unit(&id1).status, BloodStatus::Reserved);
+    assert_eq!(client.get_blood_unit(&id2).status, BloodStatus::Reserved);
+    assert_eq!(client.get_blood_unit(&id3).status, BloodStatus::Reserved);
+}
+
+#[test]
+fn test_reserve_expired_unit_fails() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000);
+
+    let unit_id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+
+    // Advance past shelf life
+    env.ledger().set_timestamp(1000 + SHELF_LIFE_SECS + 1);
+
+    let result = client.try_reserve_blood(&admin, &vec![&env, unit_id], &1u64, &3600u64);
+    assert!(result.is_err());
+}
