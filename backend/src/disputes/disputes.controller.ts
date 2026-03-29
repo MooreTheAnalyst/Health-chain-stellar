@@ -1,8 +1,10 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, Res, UseInterceptors } from '@nestjs/common';
 import { Response } from 'express';
 import { User } from '../auth/decorators/user.decorator';
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
+import { Auditable } from '../common/audit/auditable.decorator';
+import { AuditLogInterceptor } from '../common/audit/audit-log.interceptor';
 import { DisputesService } from './disputes.service';
 import { AddNoteDto, AssignDisputeDto, OpenDisputeDto, ResolveDisputeDto } from './dto/dispute.dto';
 import { DisputeSeverity, DisputeStatus } from './enums/dispute.enum';
@@ -43,11 +45,15 @@ export class DisputesController {
     return this.service.get(id);
   }
 
+  @Auditable({ action: 'dispute.assigned', resourceType: 'Dispute' })
+  @UseInterceptors(AuditLogInterceptor)
   @Patch(':id/assign')
   assign(@Param('id') id: string, @Body() dto: AssignDisputeDto) {
     return this.service.assign(id, dto.operatorId);
   }
 
+  @Auditable({ action: 'dispute.resolved', resourceType: 'Dispute' })
+  @UseInterceptors(AuditLogInterceptor)
   @Patch(':id/resolve')
   resolve(@Param('id') id: string, @Body() dto: ResolveDisputeDto) {
     return this.service.resolve(id, dto);
