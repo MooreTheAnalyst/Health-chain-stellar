@@ -4,7 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { BullModule } from '@nestjs/bullmq';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
-import { ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 
 import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 
@@ -37,7 +37,9 @@ import { UserActivityModule } from './user-activity/user-activity.module';
 import { UsersModule } from './users/users.module';
 import { TrackingModule } from './tracking/tracking.module';
 import { TransparencyModule } from './transparency/transparency.module';
+import { ProofBundleModule } from './proof-bundle/proof-bundle.module';
 import { PolicyCenterModule } from './policy-center/policy-center.module';
+import { ReconciliationModule } from './reconciliation/reconciliation.module';
 
 import type Redis from 'ioredis';
 
@@ -70,6 +72,30 @@ import type Redis from 'ioredis';
       }),
       inject: [ConfigService],
     }),
+    /**
+     * ThrottlerModule with Redis storage for distributed rate limiting.
+     * Per-role limits are resolved at request time by RoleAwareThrottlerGuard;
+     * the base limit here acts as a fallback only.
+     */
+    ThrottlerModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        throttlers: [
+          {
+            name: 'default',
+            ttl: THROTTLE_TTL_MS,
+            limit: 30, // fallback; overridden per-role by RoleAwareThrottlerGuard
+          },
+        ],
+        storage: new ThrottlerStorageRedisService({
+          host: config.get<string>('REDIS_HOST', 'localhost'),
+          port: config.get<number>('REDIS_PORT', 6379),
+          password: config.get<string>('REDIS_PASSWORD', undefined),
+        } as unknown as Redis),
+        getTracker: throttleGetTracker,
+      }),
+    }),
     UsersModule,
     AuthModule,
     InventoryModule,
@@ -90,14 +116,20 @@ import type Redis from 'ioredis';
     HospitalsModule,
     MapsModule,
     TransparencyModule,
+    ProofBundleModule,
     PolicyCenterModule,
-    AuditLogModule,
+    ReconciliationModule,
   ],
   controllers: [AppController],
   providers: [
     AppService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    /**
+     * Runs after JWT so req.user is populated before role resolution.
+     * Replaces the generic ThrottlerGuard with role-aware limits.
+     */
+    { provide: APP_GUARD, useClass: RoleAwareThrottlerGuard },
+    /** Permission enforcement applied globally; use @RequirePermissions() to specify */
     { provide: APP_GUARD, useClass: PermissionsGuard },
     CorrelationIdService,
   ],

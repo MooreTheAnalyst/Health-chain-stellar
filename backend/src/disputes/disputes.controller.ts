@@ -1,15 +1,16 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Res, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
 import { Response } from 'express';
 import { User } from '../auth/decorators/user.decorator';
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
-import { Auditable } from '../common/audit/auditable.decorator';
-import { AuditLogInterceptor } from '../common/audit/audit-log.interceptor';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { DisputesService } from './disputes.service';
 import { AddNoteDto, AssignDisputeDto, OpenDisputeDto, ResolveDisputeDto } from './dto/dispute.dto';
 import { DisputeSeverity, DisputeStatus } from './enums/dispute.enum';
 
 @Controller('disputes')
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 export class DisputesController {
   constructor(private readonly service: DisputesService) {}
 
@@ -19,6 +20,7 @@ export class DisputesController {
   }
 
   @Get()
+  @RequirePermissions(Permission.DISPUTE_RESOLVE)
   list(
     @Query('status') status?: DisputeStatus,
     @Query('severity') severity?: DisputeSeverity,
@@ -41,6 +43,7 @@ export class DisputesController {
   }
 
   @Get(':id')
+  @RequirePermissions(Permission.DISPUTE_RESOLVE)
   get(@Param('id') id: string) {
     return this.service.get(id);
   }
@@ -48,6 +51,7 @@ export class DisputesController {
   @Auditable({ action: 'dispute.assigned', resourceType: 'Dispute' })
   @UseInterceptors(AuditLogInterceptor)
   @Patch(':id/assign')
+  @RequirePermissions(Permission.DISPUTE_RESOLVE)
   assign(@Param('id') id: string, @Body() dto: AssignDisputeDto) {
     return this.service.assign(id, dto.operatorId);
   }
@@ -55,21 +59,25 @@ export class DisputesController {
   @Auditable({ action: 'dispute.resolved', resourceType: 'Dispute' })
   @UseInterceptors(AuditLogInterceptor)
   @Patch(':id/resolve')
+  @RequirePermissions(Permission.DISPUTE_RESOLVE)
   resolve(@Param('id') id: string, @Body() dto: ResolveDisputeDto) {
     return this.service.resolve(id, dto);
   }
 
   @Post(':id/notes')
+  @RequirePermissions(Permission.DISPUTE_RESOLVE)
   addNote(@Param('id') id: string, @Body() dto: AddNoteDto, @User('id') userId: string) {
     return this.service.addNote(id, dto.content, userId);
   }
 
   @Get(':id/notes')
+  @RequirePermissions(Permission.DISPUTE_RESOLVE)
   getNotes(@Param('id') id: string) {
     return this.service.getNotes(id);
   }
 
   @Post(':id/evidence')
+  @RequirePermissions(Permission.DISPUTE_RESOLVE)
   addEvidence(@Param('id') id: string, @Body() body: { type: string; url: string }) {
     return this.service.addEvidence(id, body);
   }
